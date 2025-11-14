@@ -1,0 +1,871 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Part 3: ECS Cluster & Services - Production Ready with Security, HA, and Service Discovery'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - Subnet1
+          - Subnet2
+          - AssignPublicIP
+      - Label:
+          default: "Service Configuration"
+        Parameters:
+          - FrontendDesiredCount
+          - BackendDesiredCount
+          - FrontendCpu
+          - FrontendMemory
+          - BackendCpu
+          - BackendMemory
+      - Label:
+          default: "Environment & Features"
+        Parameters:
+          - Environment
+          - EnableFargateSpot
+          - EnableServiceDiscovery
+          - EnableXRayTracing
+
+Parameters:
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet 1 for ECS Tasks (preferably private)
+  
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet 2 for ECS Tasks (preferably private)
+  
+  AssignPublicIP:
+    Type: String
+    Default: 'DISABLED'
+    AllowedValues: ['ENABLED', 'DISABLED']
+    Description: Assign public IP (DISABLED recommended with private subnets + VPC endpoints)
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+    Description: Environment name
+  
+  FrontendDesiredCount:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 20
+    Description: Number of frontend tasks (min 2 for HA)
+  
+  BackendDesiredCount:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 20
+    Description: Number of backend tasks (min 2 for HA)
+  
+  FrontendCpu:
+    Type: String
+    Default: '256'
+    AllowedValues: ['256', '512', '1024', '2048', '4096']
+    Description: Frontend container CPU units (256 = 0.25 vCPU)
+  
+  FrontendMemory:
+    Type: String
+    Default: '512'
+    AllowedValues: ['512', '1024', '2048', '4096', '8192']
+    Description: Frontend container memory (MB)
+  
+  BackendCpu:
+    Type: String
+    Default: '256'
+    AllowedValues: ['256', '512', '1024', '2048', '4096']
+    Description: Backend container CPU units (256 = 0.25 vCPU)
+  
+  BackendMemory:
+    Type: String
+    Default: '512'
+    AllowedValues: ['512', '1024', '2048', '4096', '8192']
+    Description: Backend container memory (MB)
+  
+  EnableFargateSpot:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Use Fargate Spot for cost savings (70% cheaper, may interrupt)
+  
+  EnableServiceDiscovery:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable AWS Cloud Map service discovery
+  
+  EnableXRayTracing:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable AWS X-Ray distributed tracing
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'production']
+  UseFargateSpot: !Equals [!Ref EnableFargateSpot, 'true']
+  CreateServiceDiscovery: !Equals [!Ref EnableServiceDiscovery, 'true']
+  EnableXRay: !Equals [!Ref EnableXRayTracing, 'true']
+
+Resources:
+  # ============================================
+  # SERVICE DISCOVERY (AWS CLOUD MAP)
+  # ============================================
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Condition: CreateServiceDiscovery
+    Properties:
+      Name: !Sub '${AWS::StackName}.local'
+      Vpc:
+        Fn::ImportValue: !Sub '${AWS::StackName}-VpcId'
+      Description: Private DNS namespace for service discovery
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-namespace'
+        - Key: Environment
+          Value: !Ref Environment
+
+  FrontendServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Condition: CreateServiceDiscovery
+    Properties:
+      Name: frontend
+      Description: Frontend service discovery
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        NamespaceId: !Ref ServiceDiscoveryNamespace
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-frontend-discovery'
+
+  BackendServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Condition: CreateServiceDiscovery
+    Properties:
+      Name: backend
+      Description: Backend service discovery
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        NamespaceId: !Ref ServiceDiscoveryNamespace
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-backend-discovery'
+
+  # ============================================
+  # ECS CLUSTER
+  # ============================================
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${AWS::StackName}-Cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        !If
+          - UseFargateSpot
+          - - CapacityProvider: FARGATE_SPOT
+              Weight: 4
+              Base: 0
+            - CapacityProvider: FARGATE
+              Weight: 1
+              Base: !If [IsProduction, 2, 1]
+          - - CapacityProvider: FARGATE
+              Weight: 1
+              Base: 1
+      Configuration:
+        ExecuteCommandConfiguration:
+          KmsKeyId:
+            Fn::ImportValue: !Sub '${AWS::StackName}-ECRKMSKey'
+          Logging: DEFAULT
+          LogConfiguration:
+            CloudWatchLogGroupName: !Ref ECSExecLogGroup
+            CloudWatchEncryptionEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Cluster'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ECSExecLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/exec'
+      RetentionInDays: !If [IsProduction, 30, 7]
+
+  # ============================================
+  # TASK DEFINITIONS - SECURITY HARDENED
+  # ============================================
+  FrontendTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-frontend'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref FrontendCpu
+      Memory: !Ref FrontendMemory
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub '${AWS::StackName}-ECSTaskExecRoleArn'
+      TaskRoleArn:
+        Fn::ImportValue: !Sub '${AWS::StackName}-ECSTaskRoleArn'
+      ContainerDefinitions:
+        - Name: frontend
+          Image:
+            Fn::Sub:
+              - '${URI}:latest'
+              - URI:
+                  Fn::ImportValue: !Sub '${AWS::StackName}-FrontendECR'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+              Name: http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group:
+                Fn::ImportValue: !Sub '${AWS::StackName}-FrontendLogs'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: frontend
+          Environment:
+            - Name: NODE_ENV
+              Value: !Ref Environment
+            - Name: REACT_APP_API_URL
+              Value:
+                Fn::Sub:
+                  - 'http://${DNS}/api'
+                  - DNS:
+                      Fn::ImportValue: !Sub '${AWS::StackName}-ALBDNS'
+            - Name: PORT
+              Value: '80'
+            - Name: BACKEND_SERVICE
+              Value: !If
+                - CreateServiceDiscovery
+                - !Sub 'backend.${AWS::StackName}.local'
+                - 'backend'
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'curl -f http://localhost/health || exit 1'
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          StopTimeout: 30
+          LinuxParameters:
+            InitProcessEnabled: true
+            Capabilities:
+              Drop:
+                - ALL
+          User: 'node:node'
+          ReadonlyRootFilesystem: true
+          # Tmpfs mounts for writable directories
+          MountPoints:
+            - SourceVolume: tmp
+              ContainerPath: /tmp
+              ReadOnly: false
+            - SourceVolume: cache
+              ContainerPath: /app/.cache
+              ReadOnly: false
+        
+        # X-Ray sidecar (optional)
+        - !If
+          - EnableXRay
+          - Name: xray-daemon
+            Image: !Sub 'public.ecr.aws/xray/aws-xray-daemon:latest'
+            Essential: false
+            Cpu: 32
+            Memory: 256
+            PortMappings:
+              - ContainerPort: 2000
+                Protocol: udp
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group:
+                  Fn::ImportValue: !Sub '${AWS::StackName}-FrontendLogs'
+                awslogs-region: !Ref AWS::Region
+                awslogs-stream-prefix: xray
+          - !Ref AWS::NoValue
+      
+      Volumes:
+        - Name: tmp
+        - Name: cache
+      
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-frontend-task'
+        - Key: Environment
+          Value: !Ref Environment
+
+  BackendTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-backend'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref BackendCpu
+      Memory: !Ref BackendMemory
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub '${AWS::StackName}-ECSTaskExecRoleArn'
+      TaskRoleArn:
+        Fn::ImportValue: !Sub '${AWS::StackName}-ECSTaskRoleArn'
+      ContainerDefinitions:
+        - Name: backend
+          Image:
+            Fn::Sub:
+              - '${URI}:latest'
+              - URI:
+                  Fn::ImportValue: !Sub '${AWS::StackName}-BackendECR'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 3000
+              Protocol: tcp
+              Name: http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group:
+                Fn::ImportValue: !Sub '${AWS::StackName}-BackendLogs'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: backend
+          Environment:
+            - Name: NODE_ENV
+              Value: !Ref Environment
+            - Name: PORT
+              Value: '3000'
+            - Name: AWS_XRAY_CONTEXT_MISSING
+              Value: LOG_ERROR
+          # Secrets from AWS Secrets Manager
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}/database/url'
+            - Name: API_KEY
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}/api/key'
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'curl -f http://localhost:3000/health || exit 1'
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          StopTimeout: 30
+          LinuxParameters:
+            InitProcessEnabled: true
+            Capabilities:
+              Drop:
+                - ALL
+          User: 'node:node'
+          ReadonlyRootFilesystem: true
+          MountPoints:
+            - SourceVolume: tmp
+              ContainerPath: /tmp
+              ReadOnly: false
+            - SourceVolume: logs
+              ContainerPath: /app/logs
+              ReadOnly: false
+        
+        - !If
+          - EnableXRay
+          - Name: xray-daemon
+            Image: !Sub 'public.ecr.aws/xray/aws-xray-daemon:latest'
+            Essential: false
+            Cpu: 32
+            Memory: 256
+            PortMappings:
+              - ContainerPort: 2000
+                Protocol: udp
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group:
+                  Fn::ImportValue: !Sub '${AWS::StackName}-BackendLogs'
+                awslogs-region: !Ref AWS::Region
+                awslogs-stream-prefix: xray
+          - !Ref AWS::NoValue
+      
+      Volumes:
+        - Name: tmp
+        - Name: logs
+      
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-backend-task'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================
+  # ECS SERVICES - HIGH AVAILABILITY
+  # ============================================
+  FrontendService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - FrontendAutoScalingTarget
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-frontend-svc'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref FrontendTaskDefinition
+      DesiredCount: !Ref FrontendDesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: !Ref AssignPublicIP
+          Subnets:
+            - !Ref Subnet1
+            - !Ref Subnet2
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${AWS::StackName}-ECSSecurityGroup'
+      LoadBalancers:
+        - ContainerName: frontend
+          ContainerPort: 80
+          TargetGroupArn:
+            Fn::ImportValue: !Sub '${AWS::StackName}-FrontendTG'
+      ServiceRegistries: !If
+        - CreateServiceDiscovery
+        - - RegistryArn: !GetAtt FrontendServiceDiscovery.Arn
+        - !Ref AWS::NoValue
+      HealthCheckGracePeriodSeconds: 600
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: !If [IsProduction, 100, 50]
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      DeploymentController:
+        Type: ECS
+      # Task Placement Strategy for better AZ distribution
+      PlacementStrategies:
+        - Type: spread
+          Field: attribute:ecs.availability-zone
+      EnableECSManagedTags: true
+      EnableExecuteCommand: !If [IsProduction, false, true]
+      PropagateTags: SERVICE
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-frontend-svc'
+        - Key: Environment
+          Value: !Ref Environment
+
+  BackendService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - BackendAutoScalingTarget
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-backend-svc'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref BackendTaskDefinition
+      DesiredCount: !Ref BackendDesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: !Ref AssignPublicIP
+          Subnets:
+            - !Ref Subnet1
+            - !Ref Subnet2
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${AWS::StackName}-ECSSecurityGroup'
+      LoadBalancers:
+        - ContainerName: backend
+          ContainerPort: 3000
+          TargetGroupArn:
+            Fn::ImportValue: !Sub '${AWS::StackName}-BackendTG'
+      ServiceRegistries: !If
+        - CreateServiceDiscovery
+        - - RegistryArn: !GetAtt BackendServiceDiscovery.Arn
+        - !Ref AWS::NoValue
+      HealthCheckGracePeriodSeconds: 600
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: !If [IsProduction, 100, 50]
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      DeploymentController:
+        Type: ECS
+      PlacementStrategies:
+        - Type: spread
+          Field: attribute:ecs.availability-zone
+      EnableECSManagedTags: true
+      EnableExecuteCommand: !If [IsProduction, false, true]
+      PropagateTags: SERVICE
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-backend-svc'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================
+  # AUTO SCALING - PRODUCTION READY
+  # ============================================
+  FrontendAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: !If [IsProduction, 20, 6]
+      MinCapacity: !If [IsProduction, 2, 1]
+      ResourceId: !Sub 'service/${ECSCluster}/${AWS::StackName}-frontend-svc'
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  FrontendCPUScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-frontend-cpu-scaling'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref FrontendAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  FrontendMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-frontend-memory-scaling'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref FrontendAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 80.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  FrontendRequestCountScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: IsProduction
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-frontend-request-scaling'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref FrontendAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 1000.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+          ResourceLabel: !Join
+            - '/'
+            - - !Select [1, !Split ['loadbalancer/', !ImportValue !Sub '${AWS::StackName}-ALB']]
+              - !Select [1, !Split ['targetgroup/', !ImportValue !Sub '${AWS::StackName}-FrontendTG']]
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  BackendAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: !If [IsProduction, 20, 6]
+      MinCapacity: !If [IsProduction, 2, 1]
+      ResourceId: !Sub 'service/${ECSCluster}/${AWS::StackName}-backend-svc'
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  BackendCPUScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-backend-cpu-scaling'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref BackendAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  BackendMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-backend-memory-scaling'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref BackendAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 80.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  BackendRequestCountScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: IsProduction
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-backend-request-scaling'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref BackendAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 1000.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+          ResourceLabel: !Join
+            - '/'
+            - - !Select [1, !Split ['loadbalancer/', !ImportValue !Sub '${AWS::StackName}-ALB']]
+              - !Select [1, !Split ['targetgroup/', !ImportValue !Sub '${AWS::StackName}-BackendTG']]
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  # ============================================
+  # CLOUDWATCH ALARMS - ENHANCED
+  # ============================================
+  FrontendUnhealthyTasksAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-frontend-unhealthy-tasks'
+      AlarmDescription: Alert when frontend has unhealthy tasks
+      MetricName: HealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: !Ref FrontendDesiredCount
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: TargetGroup
+          Value: !Select [1, !Split ['targetgroup/', !ImportValue !Sub '${AWS::StackName}-FrontendTG']]
+        - Name: LoadBalancer
+          Value: !Select [1, !Split ['loadbalancer/', !ImportValue !Sub '${AWS::StackName}-ALB']]
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref SNSTopic
+
+  BackendUnhealthyTasksAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-backend-unhealthy-tasks'
+      AlarmDescription: Alert when backend has unhealthy tasks
+      MetricName: HealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: !Ref BackendDesiredCount
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: TargetGroup
+          Value: !Select [1, !Split ['targetgroup/', !ImportValue !Sub '${AWS::StackName}-BackendTG']]
+        - Name: LoadBalancer
+          Value: !Select [1, !Split ['loadbalancer/', !ImportValue !Sub '${AWS::StackName}-ALB']]
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref SNSTopic
+
+  FrontendHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProduction
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-frontend-high-cpu'
+      AlarmDescription: Alert when frontend CPU is consistently high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !GetAtt FrontendService.Name
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      AlarmActions:
+        - !Ref SNSTopic
+
+  BackendHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProduction
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-backend-high-cpu'
+      AlarmDescription: Alert when backend CPU is consistently high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !GetAtt BackendService.Name
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      AlarmActions:
+        - !Ref SNSTopic
+
+  FrontendHighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProduction
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-frontend-high-memory'
+      AlarmDescription: Alert when frontend memory is consistently high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !GetAtt FrontendService.Name
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      AlarmActions:
+        - !Ref SNSTopic
+
+  BackendHighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProduction
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-backend-high-memory'
+      AlarmDescription: Alert when backend memory is consistently high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !GetAtt BackendService.Name
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      AlarmActions:
+        - !Ref SNSTopic
+
+  # ============================================
+  # SNS TOPIC FOR NOTIFICATIONS
+  # ============================================
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-alerts'
+      DisplayName: ECS Service Alerts
+      KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-alerts'
+        - Key: Environment
+          Value: !Ref Environment
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SNSTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudwatch.amazonaws.com
+            Action:
+              - 'SNS:Publish'
+            Resource: !Ref SNSTopic
+
+Outputs:
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSClusterName'
+
+  ECSClusterArn:
+    Description: ECS Cluster ARN
+    Value: !GetAtt ECSCluster.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSClusterArn'
+
+  FrontendServiceName:
+    Description: Frontend Service Name
+    Value: !GetAtt FrontendService.Name
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendServiceName'
+
+  BackendServiceName:
+    Description: Backend Service Name
+    Value: !GetAtt BackendService.Name
+    Export:
+      Name: !Sub '${AWS::StackName}-BackendServiceName'
+
+  FrontendTaskDefArn:
+    Description: Frontend Task Definition ARN
+    Value: !Ref FrontendTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendTaskDef'
+
+  BackendTaskDefArn:
+    Description: Backend Task Definition ARN
+    Value: !Ref BackendTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-BackendTaskDef'
+
+  ServiceDiscoveryNamespace:
+    Description: Service Discovery Namespace
+    Value: !If
+      - CreateServiceDiscovery
+      - !Sub '${AWS::StackName}.local'
+      - 'N/A'
+    Export:
+      Name: !Sub '${AWS::StackName}-ServiceDiscoveryNS'
+
+  FrontendServiceURL:
+    Description: Frontend Service Discovery URL
+    Value: !If
+      - CreateServiceDiscovery
+      - !Sub 'frontend.${AWS::StackName}.local'
+      - 'N/A'
+
+  BackendServiceURL:
+    Description: Backend Service Discovery URL
+    Value: !If
+      - CreateServiceDiscovery
+      - !Sub 'backend.${AWS::StackName}.local'
+      - 'N/A'
+
+  SNSTopicArn:
+    Description: SNS Topic for Alarms
+    Value: !Ref SNSTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-SNSTopic'
+
+  SecurityFeatures:
+    Description: Security features enabled in task definitions
+    Value: 'ReadonlyRootFS:Yes, DropCapabilities:Yes, Non-RootUser:Yes, XRay:${EnableXRayTracing}'
+
+  DeploymentConfiguration:
+    Description: Deployment configuration summary
+    Value: !Sub
+      - 'CircuitBreaker:Enabled, MinHealthy:${MinHealthy}%, FargateSpot:${Spot}, ServiceDiscovery:${SD}'
+      - MinHealthy: !If [IsProduction, '100', '50']
+        Spot: !Ref EnableFargateSpot
+        SD: !Ref EnableServiceDiscovery

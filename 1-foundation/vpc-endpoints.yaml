@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 1c: VPC Endpoints for Private Subnet Access'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name for resource naming
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where endpoints will be created
+  
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 1 for VPC Endpoints
+  
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 2 for VPC Endpoints
+  
+  EnableVpcEndpoints:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Create VPC Endpoints (costs ~$22/month)
+
+Conditions:
+  CreateVpcEndpoints: !Equals [!Ref EnableVpcEndpoints, 'true']
+
+Resources:
+  # ============================================
+  # SECURITY GROUP FOR VPC ENDPOINTS
+  # ============================================
+  VpcEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateVpcEndpoints
+    Properties:
+      GroupName: !Sub '${ProjectName}-${Environment}-VPCEndpoint-SG'
+      GroupDescription: Security group for VPC Endpoints
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS from VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-VPCEndpoint-SG'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================
+  # ECR API ENDPOINT
+  # ============================================
+  ECRApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateVpcEndpoints
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ecr:GetAuthorizationToken'
+              - 'ecr:BatchCheckLayerAvailability'
+              - 'ecr:GetDownloadUrlForLayer'
+              - 'ecr:BatchGetImage'
+              - 'ecr:DescribeRepositories'
+              - 'ecr:DescribeImages'
+              - 'ecr:ListImages'
+            Resource: '*'
+
+  # ============================================
+  # ECR DOCKER ENDPOINT
+  # ============================================
+  ECRDockerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateVpcEndpoints
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+
+  # ============================================
+  # S3 GATEWAY ENDPOINT
+  # ============================================
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateVpcEndpoints
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:ListBucket'
+            Resource: '*'
+
+  # Note: You'll need to provide route table IDs or create them
+  # This is a placeholder - adjust based on your VPC setup
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVpcEndpoints
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-rt-1'
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVpcEndpoints
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-rt-2'
+
+  # ============================================
+  # CLOUDWATCH LOGS ENDPOINT
+  # ============================================
+  CloudWatchLogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateVpcEndpoints
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+
+  # ============================================
+  # SECRETS MANAGER ENDPOINT
+  # ============================================
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateVpcEndpoints
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+
+Outputs:
+  VpcEndpointSecurityGroupId:
+    Description: VPC Endpoint Security Group ID
+    Value: !If [CreateVpcEndpoints, !Ref VpcEndpointSecurityGroup, 'N/A']
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-VPCEndpointSG'
+
+  ECRApiEndpointId:
+    Description: ECR API Endpoint ID
+    Value: !If [CreateVpcEndpoints, !Ref ECRApiEndpoint, 'N/A']
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ECRApiEndpoint'
+
+  VpcEndpointsEnabled:
+    Description: Whether VPC Endpoints are enabled
+    Value: !Ref EnableVpcEndpoints
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-VPCEndpointsEnabled'

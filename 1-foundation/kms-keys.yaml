@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 1a: KMS Keys for Encryption'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name for resource naming
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+
+Resources:
+  # ============================================
+  # ECR KMS KEY
+  # ============================================
+  ECRKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for ${ProjectName}-${Environment} ECR repositories'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow ECR to use the key
+            Effect: Allow
+            Principal:
+              Service: ecr.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:DescribeKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-ecr-kms'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  ECRKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}-ecr'
+      TargetKeyId: !Ref ECRKMSKey
+
+  # ============================================
+  # S3 KMS KEY
+  # ============================================
+  S3KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for ${ProjectName}-${Environment} S3 buckets'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow S3 to use the key
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-s3-kms'
+        - Key: Environment
+          Value: !Ref Environment
+
+  S3KMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}-s3'
+      TargetKeyId: !Ref S3KMSKey
+
+  # ============================================
+  # CLOUDWATCH LOGS KMS KEY
+  # ============================================
+  CloudWatchKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for ${ProjectName}-${Environment} CloudWatch Logs'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow CloudWatch Logs
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:CreateGrant'
+              - 'kms:DescribeKey'
+            Resource: '*'
+            Condition:
+              ArnLike:
+                'kms:EncryptionContext:aws:logs:arn': !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-logs-kms'
+        - Key: Environment
+          Value: !Ref Environment
+
+  CloudWatchKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}-logs'
+      TargetKeyId: !Ref CloudWatchKMSKey
+
+Outputs:
+  ECRKMSKeyId:
+    Description: ECR KMS Key ID
+    Value: !Ref ECRKMSKey
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ECRKMSKeyId'
+
+  ECRKMSKeyArn:
+    Description: ECR KMS Key ARN
+    Value: !GetAtt ECRKMSKey.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ECRKMSKeyArn'
+
+  S3KMSKeyId:
+    Description: S3 KMS Key ID
+    Value: !Ref S3KMSKey
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-S3KMSKeyId'
+
+  S3KMSKeyArn:
+    Description: S3 KMS Key ARN
+    Value: !GetAtt S3KMSKey.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-S3KMSKeyArn'
+
+  CloudWatchKMSKeyId:
+    Description: CloudWatch KMS Key ID
+    Value: !Ref CloudWatchKMSKey
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-CloudWatchKMSKeyId'
+
+  CloudWatchKMSKeyArn:
+    Description: CloudWatch KMS Key ARN
+    Value: !GetAtt CloudWatchKMSKey.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-CloudWatchKMSKeyArn'
