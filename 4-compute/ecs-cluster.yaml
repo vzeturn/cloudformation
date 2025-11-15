@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 4a: ECS Cluster with Container Insights'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${ProjectName}-${Environment}-Cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Configuration:
+        ExecuteCommandConfiguration:
+          KmsKeyId:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CloudWatchKMSKeyArn'
+          Logging: OVERRIDE
+          LogConfiguration:
+            CloudWatchEncryptionEnabled: true
+            CloudWatchLogGroupName:
+              Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ECSExecLogGroup'
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 2
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 4
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-Cluster'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  ClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ClusterName'
+
+  ClusterArn:
+    Description: ECS Cluster ARN
+    Value: !GetAtt ECSCluster.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ClusterArn'

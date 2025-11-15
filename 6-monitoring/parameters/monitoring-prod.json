@@ -1,0 +1,22 @@
+[
+    {
+      "ParameterKey": "ProjectName",
+      "ParameterValue": "aqua-sample-app"
+    },
+    {
+      "ParameterKey": "Environment",
+      "ParameterValue": "production"
+    },
+    {
+      "ParameterKey": "AlertEmail",
+      "ParameterValue": "ops-team@example.com"
+    },
+    {
+      "ParameterKey": "HighCPUThreshold",
+      "ParameterValue": "80"
+    },
+    {
+      "ParameterKey": "HighMemoryThreshold",
+      "ParameterValue": "85"
+    }
+  ]

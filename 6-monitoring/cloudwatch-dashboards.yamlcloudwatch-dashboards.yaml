@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 6c: CloudWatch Dashboards'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+
+Resources:
+  MainDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-${Environment}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ECS", "CPUUtilization", {"stat": "Average"}],
+                  [".", "MemoryUtilization", {"stat": "Average"}]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "ECS Cluster Utilization",
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ApplicationELB", "RequestCount", {"stat": "Sum"}],
+                  [".", "TargetResponseTime", {"stat": "Average", "yAxis": "right"}]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "ALB Metrics",
+                "yAxis": {
+                  "right": {
+                    "label": "Response Time (s)"
+                  },
+                  "left": {
+                    "label": "Request Count"
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ECS", "CPUUtilization", {"dimensions": {"ServiceName": "${ProjectName}-${Environment}-frontend-svc", "ClusterName": "${ProjectName}-${Environment}-Cluster"}}],
+                  [".", "MemoryUtilization", {"dimensions": {"ServiceName": "${ProjectName}-${Environment}-frontend-svc", "ClusterName": "${ProjectName}-${Environment}-Cluster"}}]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Frontend Service Metrics",
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ECS", "CPUUtilization", {"dimensions": {"ServiceName": "${ProjectName}-${Environment}-backend-svc", "ClusterName": "${ProjectName}-${Environment}-Cluster"}}],
+                  [".", "MemoryUtilization", {"dimensions": {"ServiceName": "${ProjectName}-${Environment}-backend-svc", "ClusterName": "${ProjectName}-${Environment}-Cluster"}}]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Backend Service Metrics",
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "log",
+              "properties": {
+                "query": "SOURCE '/ecs/${ProjectName}-${Environment}/backend'\n| fields @timestamp, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 20",
+                "region": "${AWS::Region}",
+                "stacked": false,
+                "title": "Recent Backend Errors",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ProjectName}-${Environment}-dashboard'

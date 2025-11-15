@@ -1,0 +1,70 @@
+[
+    {
+      "ParameterKey": "ProjectName",
+      "ParameterValue": "aqua-sample-app"
+    },
+    {
+      "ParameterKey": "Environment",
+      "ParameterValue": "production"
+    },
+    {
+      "ParameterKey": "VpcId",
+      "ParameterValue": "vpc-xxxxxxxxx"
+    },
+    {
+      "ParameterKey": "PrivateSubnet1",
+      "ParameterValue": "subnet-xxxxxxxxx"
+    },
+    {
+      "ParameterKey": "PrivateSubnet2",
+      "ParameterValue": "subnet-yyyyyyyyy"
+    },
+    {
+      "ParameterKey": "FrontendCPU",
+      "ParameterValue": "512"
+    },
+    {
+      "ParameterKey": "FrontendMemory",
+      "ParameterValue": "1024"
+    },
+    {
+      "ParameterKey": "BackendCPU",
+      "ParameterValue": "1024"
+    },
+    {
+      "ParameterKey": "BackendMemory",
+      "ParameterValue": "2048"
+    },
+    {
+      "ParameterKey": "FrontendDesiredCount",
+      "ParameterValue": "2"
+    },
+    {
+      "ParameterKey": "BackendDesiredCount",
+      "ParameterValue": "2"
+    },
+    {
+      "ParameterKey": "FrontendMinCapacity",
+      "ParameterValue": "2"
+    },
+    {
+      "ParameterKey": "FrontendMaxCapacity",
+      "ParameterValue": "10"
+    },
+    {
+      "ParameterKey": "BackendMinCapacity",
+      "ParameterValue": "2"
+    },
+    {
+      "ParameterKey": "BackendMaxCapacity",
+      "ParameterValue": "10"
+    },
+    {
+      "ParameterKey": "TargetCPUUtilization",
+      "ParameterValue": "70"
+    },
+    {
+      "ParameterKey": "TargetMemoryUtilization",
+      "ParameterValue": "80"
+    }
+  ]

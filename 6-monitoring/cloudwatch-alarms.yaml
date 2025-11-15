@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 6b: CloudWatch Alarms'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+  
+  HighCPUThreshold:
+    Type: Number
+    Default: 80
+    Description: CPU utilization threshold for alarm
+  
+  HighMemoryThreshold:
+    Type: Number
+    Default: 85
+    Description: Memory utilization threshold for alarm
+
+Resources:
+  # Frontend Alarms
+  FrontendHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-frontend-high-cpu'
+      AlarmDescription: Frontend service CPU utilization is too high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref HighCPUThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendServiceName'
+        - Name: ClusterName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+      AlarmActions:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+      TreatMissingData: notBreaching
+
+  FrontendHighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-frontend-high-memory'
+      AlarmDescription: Frontend service memory utilization is too high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref HighMemoryThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendServiceName'
+        - Name: ClusterName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+      AlarmActions:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+      TreatMissingData: notBreaching
+
+  # Backend Alarms
+  BackendHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-backend-high-cpu'
+      AlarmDescription: Backend service CPU utilization is too high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref HighCPUThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendServiceName'
+        - Name: ClusterName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+      AlarmActions:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+      TreatMissingData: notBreaching
+
+  BackendHighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-backend-high-memory'
+      AlarmDescription: Backend service memory utilization is too high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref HighMemoryThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendServiceName'
+        - Name: ClusterName
+          Value:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+      AlarmActions:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+      TreatMissingData: notBreaching
+
+  # ALB Alarms
+  ALBUnhealthyTargetAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-alb-unhealthy-targets'
+      AlarmDescription: ALB has unhealthy targets
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Sub 
+            - 'app/${LoadBalancerName}/${LoadBalancerId}'
+            - LoadBalancerName: !Sub '${ProjectName}-${Environment}-ALB'
+              LoadBalancerId:
+                Fn::Select:
+                  - 3
+                  - Fn::Split:
+                      - '/'
+                      - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ALBArn'
+      AlarmActions:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+
+  ALBHighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-alb-high-latency'
+      AlarmDescription: ALB latency is too high
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1.0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Sub 
+            - 'app/${LoadBalancerName}/${LoadBalancerId}'
+            - LoadBalancerName: !Sub '${ProjectName}-${Environment}-ALB'
+              LoadBalancerId:
+                Fn::Select:
+                  - 3
+                  - Fn::Split:
+                      - '/'
+                      - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ALBArn'
+      AlarmActions:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+
+Outputs:
+  FrontendHighCPUAlarmArn:
+    Description: Frontend High CPU Alarm ARN
+    Value: !GetAtt FrontendHighCPUAlarm.Arn
+
+  BackendHighCPUAlarmArn:
+    Description: Backend High CPU Alarm ARN
+    Value: !GetAtt BackendHighCPUAlarm.Arn

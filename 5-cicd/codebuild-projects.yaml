@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 5a: CodeBuild Projects for CI/CD'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+
+Resources:
+  FrontendBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-frontend-build'
+      Description: Build frontend Docker image
+      ServiceRole:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodeBuildRoleArn'
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Sub '${ProjectName}-${Environment}-frontend'
+          - Name: IMAGE_TAG
+            Value: latest
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+            build:
+              commands:
+                - echo Build started on `date`
+                - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+                - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+            post_build:
+              commands:
+                - echo Pushing the Docker image...
+                - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+                - printf '[{"name":"frontend","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > imagedefinitions.json
+          artifacts:
+            files:
+              - imagedefinitions.json
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendBuildLogGroup'
+          Status: ENABLED
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-frontend-build'
+        - Key: Environment
+          Value: !Ref Environment
+
+  BackendBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-backend-build'
+      Description: Build backend Docker image
+      ServiceRole:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodeBuildRoleArn'
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Sub '${ProjectName}-${Environment}-backend'
+          - Name: IMAGE_TAG
+            Value: latest
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+            build:
+              commands:
+                - echo Build started on `date`
+                - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+                - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+            post_build:
+              commands:
+                - echo Pushing the Docker image...
+                - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+                - printf '[{"name":"backend","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > imagedefinitions.json
+          artifacts:
+            files:
+              - imagedefinitions.json
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendBuildLogGroup'
+          Status: ENABLED
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-backend-build'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  FrontendBuildProjectArn:
+    Description: Frontend Build Project ARN
+    Value: !GetAtt FrontendBuildProject.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-FrontendBuildArn'
+
+  BackendBuildProjectArn:
+    Description: Backend Build Project ARN
+    Value: !GetAtt BackendBuildProject.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BackendBuildArn'

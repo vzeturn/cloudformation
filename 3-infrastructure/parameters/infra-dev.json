@@ -1,0 +1,34 @@
+[
+    {
+      "ParameterKey": "ProjectName",
+      "ParameterValue": "aqua-sample-app"
+    },
+    {
+      "ParameterKey": "Environment",
+      "ParameterValue": "development"
+    },
+    {
+      "ParameterKey": "VpcId",
+      "ParameterValue": "vpc-xxxxxxxxx"
+    },
+    {
+      "ParameterKey": "PublicSubnet1",
+      "ParameterValue": "subnet-xxxxxxxxx"
+    },
+    {
+      "ParameterKey": "PublicSubnet2",
+      "ParameterValue": "subnet-yyyyyyyyy"
+    },
+    {
+      "ParameterKey": "CertificateArn",
+      "ParameterValue": ""
+    },
+    {
+      "ParameterKey": "ImageRetentionCount",
+      "ParameterValue": "5"
+    },
+    {
+      "ParameterKey": "RateLimitPerIP",
+      "ParameterValue": "5000"
+    }
+  ]

@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 5b: CodePipeline for Continuous Deployment'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+  
+  GitHubConnectionArn:
+    Type: String
+    Description: GitHub Connection ARN
+  
+  GitHubRepoFrontend:
+    Type: String
+    Description: Frontend repository (owner/repo)
+    Default: 'your-org/frontend-repo'
+  
+  GitHubRepoBackend:
+    Type: String
+    Description: Backend repository (owner/repo)
+    Default: 'your-org/backend-repo'
+  
+  GitHubBranch:
+    Type: String
+    Default: 'main'
+
+Resources:
+  FrontendPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-frontend-pipeline'
+      RoleArn:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodePipelineRoleArn'
+      ArtifactStore:
+        Type: S3
+        Location:
+          Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ArtifactsBucket'
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Ref GitHubRepoFrontend
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceArtifact
+        
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendBuildArn'
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+        
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: ECS
+                Version: '1'
+              Configuration:
+                ClusterName:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+                ServiceName:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendServiceName'
+                FileName: imagedefinitions.json
+              InputArtifacts:
+                - Name: BuildArtifact
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-frontend-pipeline'
+        - Key: Environment
+          Value: !Ref Environment
+
+  BackendPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-backend-pipeline'
+      RoleArn:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodePipelineRoleArn'
+      ArtifactStore:
+        Type: S3
+        Location:
+          Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ArtifactsBucket'
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Ref GitHubRepoBackend
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceArtifact
+        
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendBuildArn'
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+        
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: ECS
+                Version: '1'
+              Configuration:
+                ClusterName:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+                ServiceName:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendServiceName'
+                FileName: imagedefinitions.json
+              InputArtifacts:
+                - Name: BuildArtifact
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-backend-pipeline'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  FrontendPipelineArn:
+    Description: Frontend Pipeline ARN
+    Value: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${FrontendPipeline}'
+
+  BackendPipelineArn:
+    Description: Backend Pipeline ARN
+    Value: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${BackendPipeline}'

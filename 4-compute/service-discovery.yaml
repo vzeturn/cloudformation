@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 4b: AWS Cloud Map for Service Discovery'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+Resources:
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}.local'
+      Vpc: !Ref VpcId
+      Description: !Sub 'Service discovery for ${ProjectName}-${Environment}'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-namespace'
+        - Key: Environment
+          Value: !Ref Environment
+
+  FrontendServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: frontend
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 60
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-frontend-sd'
+        - Key: Environment
+          Value: !Ref Environment
+
+  BackendServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: backend
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 60
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-backend-sd'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  NamespaceId:
+    Description: Service Discovery Namespace ID
+    Value: !Ref ServiceDiscoveryNamespace
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-NamespaceId'
+
+  NamespaceName:
+    Description: Service Discovery Namespace Name
+    Value: !GetAtt ServiceDiscoveryNamespace.Name
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-NamespaceName'
+
+  FrontendServiceDiscoveryArn:
+    Description: Frontend Service Discovery ARN
+    Value: !GetAtt FrontendServiceDiscovery.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-FrontendSDArn'
+
+  BackendServiceDiscoveryArn:
+    Description: Backend Service Discovery ARN
+    Value: !GetAtt BackendServiceDiscovery.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BackendSDArn'

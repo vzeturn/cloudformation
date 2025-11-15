@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 3a: ECR Repositories for Container Images'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name for resource naming
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+  
+  ImageRetentionCount:
+    Type: Number
+    Default: 10
+    Description: Number of images to retain
+    MinValue: 1
+    MaxValue: 100
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'production']
+
+Resources:
+  # ============================================
+  # FRONTEND ECR REPOSITORY
+  # ============================================
+  FrontendRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-${Environment}-frontend'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey:
+          Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ECRKMSKeyArn'
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last ${ImageRetentionCount} images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${ImageRetentionCount}
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-frontend'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: frontend
+
+  # ============================================
+  # BACKEND ECR REPOSITORY
+  # ============================================
+  BackendRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-${Environment}-backend'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey:
+          Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ECRKMSKeyArn'
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last ${ImageRetentionCount} images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${ImageRetentionCount}
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-backend'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: backend
+
+Outputs:
+  FrontendRepositoryUri:
+    Description: Frontend ECR Repository URI
+    Value: !GetAtt FrontendRepository.RepositoryUri
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-FrontendRepoUri'
+
+  FrontendRepositoryArn:
+    Description: Frontend ECR Repository ARN
+    Value: !GetAtt FrontendRepository.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-FrontendRepoArn'
+
+  BackendRepositoryUri:
+    Description: Backend ECR Repository URI
+    Value: !GetAtt BackendRepository.RepositoryUri
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BackendRepoUri'
+
+  BackendRepositoryArn:
+    Description: Backend ECR Repository ARN
+    Value: !GetAtt BackendRepository.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BackendRepoArn'

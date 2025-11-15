@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 6a: SNS Topics for Notifications'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+  
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Email address for alert notifications (optional)
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-alerts'
+      DisplayName: !Sub '${ProjectName} ${Environment} Alerts'
+      KmsMasterKeyId:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CloudWatchKMSKeyArn'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-alerts'
+        - Key: Environment
+          Value: !Ref Environment
+
+  AlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertTopic
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - 'SNS:Publish'
+            Resource: !Ref AlertTopic
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+Outputs:
+  AlertTopicArn:
+    Description: Alert Topic ARN
+    Value: !Ref AlertTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+
+  AlertTopicName:
+    Description: Alert Topic Name
+    Value: !GetAtt AlertTopic.TopicName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AlertTopicName'

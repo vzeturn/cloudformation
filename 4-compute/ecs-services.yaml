@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stage 4d: ECS Services'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'myproject'
+  
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+  
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+  
+  FrontendDesiredCount:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 10
+  
+  BackendDesiredCount:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 10
+
+Resources:
+  FrontendService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub '${ProjectName}-${Environment}-frontend-svc'
+      Cluster:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+      TaskDefinition:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendTaskDefArn'
+      DesiredCount: !Ref FrontendDesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ECSSecurityGroupId'
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+      LoadBalancers:
+        - ContainerName: frontend
+          ContainerPort: 3000
+          TargetGroupArn:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendTGArn'
+      ServiceRegistries:
+        - RegistryArn:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendSDArn'
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      EnableExecuteCommand: true
+      HealthCheckGracePeriodSeconds: 60
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-frontend-svc'
+        - Key: Environment
+          Value: !Ref Environment
+
+  BackendService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub '${ProjectName}-${Environment}-backend-svc'
+      Cluster:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+      TaskDefinition:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendTaskDefArn'
+      DesiredCount: !Ref BackendDesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ECSSecurityGroupId'
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+      LoadBalancers:
+        - ContainerName: backend
+          ContainerPort: 8080
+          TargetGroupArn:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendTGArn'
+      ServiceRegistries:
+        - RegistryArn:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendSDArn'
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      EnableExecuteCommand: true
+      HealthCheckGracePeriodSeconds: 60
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-backend-svc'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  FrontendServiceArn:
+    Description: Frontend Service ARN
+    Value: !Ref FrontendService
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-FrontendServiceArn'
+
+  FrontendServiceName:
+    Description: Frontend Service Name
+    Value: !GetAtt FrontendService.Name
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-FrontendServiceName'
+
+  BackendServiceArn:
+    Description: Backend Service ARN
+    Value: !Ref BackendService
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BackendServiceArn'
+
+  BackendServiceName:
+    Description: Backend Service Name
+    Value: !GetAtt BackendService.Name
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BackendServiceName'
