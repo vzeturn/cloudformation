@@ -79,7 +79,7 @@ Resources:
                   - 'kms:Decrypt'
                   - 'kms:DescribeKey'
                 Resource:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ECRKMSKeyArn'
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-kms-ECRKMSKeyArn'
                 Condition:
                   StringEquals:
                     'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
@@ -250,7 +250,7 @@ Resources:
                   - 'kms:DescribeKey'
                   - 'kms:CreateGrant'
                 Resource:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ECRKMSKeyArn'
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-kms-ECRKMSKeyArn'
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-CodeBuildRole'
