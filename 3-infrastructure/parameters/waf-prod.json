@@ -1,0 +1,14 @@
+[
+    {
+      "ParameterKey": "ProjectName",
+      "ParameterValue": "aqua-sample-app"
+    },
+    {
+      "ParameterKey": "Environment",
+      "ParameterValue": "production"
+    },
+    {
+      "ParameterKey": "RateLimitPerIP",
+      "ParameterValue": "2000"
+    }
+  ]

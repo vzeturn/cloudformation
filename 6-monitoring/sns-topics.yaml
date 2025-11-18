@@ -4,7 +4,7 @@ Description: 'Stage 6a: SNS Topics for Notifications'
 Parameters:
   ProjectName:
     Type: String
-    Default: 'myproject'
+    Default: 'aqua-sample-app'
   
   Environment:
     Type: String

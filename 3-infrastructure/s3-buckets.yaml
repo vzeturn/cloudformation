@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Stage 3b: S3 Buckets for Artifacts and Logs'
+Description: 'Stage 3b: S3 Buckets with Complete ELB Logging Support'
 
 Parameters:
   ProjectName:
     Type: String
-    Default: 'myproject'
+    Default: 'aqua-sample-app'
   
   Environment:
     Type: String
@@ -15,6 +15,9 @@ Conditions:
   IsProduction: !Equals [!Ref Environment, 'production']
 
 Resources:
+  # ============================================
+  # ARTIFACTS BUCKET (WITH KMS)
+  # ============================================
   ArtifactsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -66,6 +69,10 @@ Resources:
               Bool:
                 'aws:SecureTransport': false
 
+  # ============================================
+  # LOGS BUCKET (SERVER-SIDE ENCRYPTION ONLY - NO KMS)
+  # This is the recommended approach for ALB logs
+  # ============================================
   LogsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -73,10 +80,7 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
-              SSEAlgorithm: 'aws:kms'
-              KMSMasterKeyID:
-                Fn::ImportValue: !Sub '${ProjectName}-${Environment}-S3KMSKeyArn'
-            BucketKeyEnabled: true
+              SSEAlgorithm: AES256  # SSE-S3 instead of KMS for ALB compatibility
       LifecycleConfiguration:
         Rules:
           - Id: ExpireLogs
@@ -92,6 +96,9 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-logs'
@@ -103,6 +110,7 @@ Resources:
     Properties:
       Bucket: !Ref LogsBucket
       PolicyDocument:
+        Version: '2012-10-17'
         Statement:
           - Sid: DenyInsecureTransport
             Effect: Deny
@@ -114,12 +122,22 @@ Resources:
             Condition:
               Bool:
                 'aws:SecureTransport': false
-          - Sid: AllowALBLogging
+          
+          # Allow ELB service to write logs
+          - Sid: AllowELBServiceAccount
             Effect: Allow
             Principal:
-              Service: elasticloadbalancing.amazonaws.com
+              AWS: 'arn:aws:iam::114774131450:root'
             Action: 's3:PutObject'
             Resource: !Sub '${LogsBucket.Arn}/*'
+          
+          # Allow ELB to check bucket ACL
+          - Sid: AllowELBServiceAccountGetAcl
+            Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::114774131450:root'
+            Action: 's3:GetBucketAcl'
+            Resource: !GetAtt LogsBucket.Arn
 
 Outputs:
   ArtifactsBucketName:
@@ -139,3 +157,9 @@ Outputs:
     Value: !Ref LogsBucket
     Export:
       Name: !Sub '${ProjectName}-${Environment}-LogsBucket'
+  
+  LogsBucketArn:
+    Description: Logs Bucket ARN
+    Value: !GetAtt LogsBucket.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-LogsBucketArn'

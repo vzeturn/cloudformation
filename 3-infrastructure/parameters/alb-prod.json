@@ -22,13 +22,5 @@
     {
       "ParameterKey": "CertificateArn",
       "ParameterValue": "arn:aws:acm:ap-southeast-1:474082330515:certificate/2d8ec448-edca-477a-b03a-c43013e2a8a3"
-    },
-    {
-      "ParameterKey": "ImageRetentionCount",
-      "ParameterValue": "10"
-    },
-    {
-      "ParameterKey": "RateLimitPerIP",
-      "ParameterValue": "2000"
     }
   ]

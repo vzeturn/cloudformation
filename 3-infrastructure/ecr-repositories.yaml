@@ -5,7 +5,7 @@ Parameters:
   ProjectName:
     Type: String
     Description: Project name for resource naming
-    Default: 'myproject'
+    Default: 'aqua-sample-app'
   
   Environment:
     Type: String

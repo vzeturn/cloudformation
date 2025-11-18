@@ -4,7 +4,7 @@ Description: 'Stage 6c: CloudWatch Dashboards'
 Parameters:
   ProjectName:
     Type: String
-    Default: 'myproject'
+    Default: 'aqua-sample-app'
   
   Environment:
     Type: String

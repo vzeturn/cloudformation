@@ -4,7 +4,7 @@ Description: 'Stage 4b: AWS Cloud Map for Service Discovery'
 Parameters:
   ProjectName:
     Type: String
-    Default: 'myproject'
+    Default: 'aqua-sample-app'
   
   Environment:
     Type: String

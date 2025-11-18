@@ -4,7 +4,7 @@ Description: 'Stage 4a: ECS Cluster with Container Insights'
 Parameters:
   ProjectName:
     Type: String
-    Default: 'myproject'
+    Default: 'aqua-sample-app'
   
   Environment:
     Type: String

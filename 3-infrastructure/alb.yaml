@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Stage 3d: Application Load Balancer'
+Description: 'Stage 3d: Application Load Balancer with Access Logging'
 
 Parameters:
   ProjectName:
     Type: String
-    Default: 'myproject'
+    Default: 'aqua-sample-app'
   
   Environment:
     Type: String
@@ -52,7 +52,7 @@ Resources:
           Value:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LogsBucket'
         - Key: access_logs.s3.prefix
-          Value: alb
+          Value: 'alb'
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-ALB'

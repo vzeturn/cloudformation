@@ -4,7 +4,7 @@ Description: 'Stage 4e: Auto Scaling for ECS Services'
 Parameters:
   ProjectName:
     Type: String
-    Default: 'myproject'
+    Default: 'aqua-sample-apps'
   
   Environment:
     Type: String
