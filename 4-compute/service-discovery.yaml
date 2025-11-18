@@ -72,15 +72,27 @@ Outputs:
 
   NamespaceName:
     Description: Service Discovery Namespace Name
-    Value: !GetAtt ServiceDiscoveryNamespace.Name
+    Value: !Sub '${ProjectName}-${Environment}.local'
     Export:
       Name: !Sub '${ProjectName}-${Environment}-NamespaceName'
+
+  FrontendServiceDiscoveryId:
+    Description: Frontend Service Discovery ID
+    Value: !Ref FrontendServiceDiscovery
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-FrontendSDId'
 
   FrontendServiceDiscoveryArn:
     Description: Frontend Service Discovery ARN
     Value: !GetAtt FrontendServiceDiscovery.Arn
     Export:
       Name: !Sub '${ProjectName}-${Environment}-FrontendSDArn'
+
+  BackendServiceDiscoveryId:
+    Description: Backend Service Discovery ID
+    Value: !Ref BackendServiceDiscovery
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BackendSDId'
 
   BackendServiceDiscoveryArn:
     Description: Backend Service Discovery ARN

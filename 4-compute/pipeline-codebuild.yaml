@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Stage 5a: CodeBuild Projects for Real Repositories'
+Description: 'Stage 4.4a: CodeBuild Projects for Pipeline'
 
 Parameters:
   ProjectName:
@@ -9,7 +9,6 @@ Parameters:
   Environment:
     Type: String
     Default: 'production'
-    AllowedValues: ['development', 'staging', 'production']
 
 Resources:
   # ============================================
@@ -18,12 +17,14 @@ Resources:
   FrontendBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub '${ProjectName}-${Environment}-frontend-build'
-      Description: Build frontend Docker image from aqua-vietnam/sample_frontend-repo
+      Name: !Sub '${ProjectName}-${Environment}-pipeline-frontend-build'
+      Description: 'Build frontend Docker image (used by CodePipeline)'
       ServiceRole:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodeBuildRoleArn'
+      
       Artifacts:
         Type: CODEPIPELINE
+      
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
@@ -36,8 +37,7 @@ Resources:
             Value: !Ref AWS::AccountId
           - Name: IMAGE_REPO_NAME
             Value: !Sub '${ProjectName}-${Environment}-frontend'
-          - Name: IMAGE_TAG
-            Value: latest
+      
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
@@ -45,41 +45,80 @@ Resources:
           phases:
             pre_build:
               commands:
+                - echo "==================================="
+                - echo "Frontend Build via CodePipeline"
+                - echo "==================================="
                 - echo "Logging in to Amazon ECR..."
                 - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-                - echo "Repository = $IMAGE_REPO_NAME"
-                - echo "Build started on $(date)"
                 - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
                 - IMAGE_TAG=${COMMIT_HASH:=latest}
+                - echo "Repository = $IMAGE_REPO_NAME"
+                - echo "Image Tag = $IMAGE_TAG"
+                - echo "Build ID = $CODEBUILD_BUILD_ID"
+                
+                # Check if Dockerfile exists
+                - |
+                  if [ ! -f Dockerfile ]; then
+                    echo "WARNING: Dockerfile not found in repository root"
+                    echo "Creating fallback Dockerfile for static content..."
+                    cat > Dockerfile <<'DOCKERFILE'
+                  FROM nginx:alpine
+                  WORKDIR /usr/share/nginx/html
+                  RUN rm -rf ./*
+                  COPY . .
+                  RUN echo 'server { \
+                      listen 8080; \
+                      server_name _; \
+                      location / { \
+                          root /usr/share/nginx/html; \
+                          index index.html; \
+                          try_files $uri $uri/ /index.html; \
+                      } \
+                      location /health { \
+                          access_log off; \
+                          return 200 "healthy\n"; \
+                          add_header Content-Type text/plain; \
+                      } \
+                  }' > /etc/nginx/conf.d/default.conf
+                  EXPOSE 8080
+                  CMD ["nginx", "-g", "daemon off;"]
+                  DOCKERFILE
+                  else
+                    echo "✓ Dockerfile found"
+                  fi
+            
             build:
               commands:
                 - echo "Building Docker image..."
                 - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
                 - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
                 - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:latest
+            
             post_build:
               commands:
-                - echo "Pushing Docker images..."
+                - echo "Pushing Docker images to ECR..."
                 - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
                 - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:latest
-                - echo "Creating imagedefinitions.json..."
+                - echo "✓ Frontend images pushed successfully"
+                - echo "Creating imagedefinitions.json for ECS deployment..."
                 - printf '[{"name":"frontend","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > imagedefinitions.json
                 - cat imagedefinitions.json
+          
           artifacts:
             files:
               - imagedefinitions.json
+      
       LogsConfig:
         CloudWatchLogs:
           GroupName:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendBuildLogGroup'
           Status: ENABLED
+      
       Tags:
         - Key: Name
-          Value: !Sub '${ProjectName}-${Environment}-frontend-build'
+          Value: !Sub '${ProjectName}-${Environment}-pipeline-frontend-build'
         - Key: Environment
           Value: !Ref Environment
-        - Key: Repository
-          Value: 'aqua-vietnam/sample_frontend-repo'
 
   # ============================================
   # BACKEND BUILD PROJECT
@@ -87,12 +126,14 @@ Resources:
   BackendBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub '${ProjectName}-${Environment}-backend-build'
-      Description: Build backend Docker image from aqua-vietnam/sample_backend-repo
+      Name: !Sub '${ProjectName}-${Environment}-pipeline-backend-build'
+      Description: 'Build backend Docker image (used by CodePipeline)'
       ServiceRole:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodeBuildRoleArn'
+      
       Artifacts:
         Type: CODEPIPELINE
+      
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
@@ -105,8 +146,7 @@ Resources:
             Value: !Ref AWS::AccountId
           - Name: IMAGE_REPO_NAME
             Value: !Sub '${ProjectName}-${Environment}-backend'
-          - Name: IMAGE_TAG
-            Value: latest
+      
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
@@ -114,63 +154,91 @@ Resources:
           phases:
             pre_build:
               commands:
+                - echo "==================================="
+                - echo "Backend Build via CodePipeline"
+                - echo "==================================="
                 - echo "Logging in to Amazon ECR..."
                 - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-                - echo "Repository = $IMAGE_REPO_NAME"
-                - echo "Build started on $(date)"
                 - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
                 - IMAGE_TAG=${COMMIT_HASH:=latest}
+                - echo "Repository = $IMAGE_REPO_NAME"
+                - echo "Image Tag = $IMAGE_TAG"
+                - echo "Build ID = $CODEBUILD_BUILD_ID"
+                
+                # Check if Dockerfile exists
+                - |
+                  if [ ! -f Dockerfile ]; then
+                    echo "WARNING: Dockerfile not found in repository root"
+                    echo "Creating fallback Dockerfile..."
+                    cat > Dockerfile <<'DOCKERFILE'
+                  FROM node:18-alpine
+                  WORKDIR /app
+                  COPY package*.json ./
+                  RUN npm install --production || echo "No package.json, skipping npm install"
+                  COPY . .
+                  EXPOSE 3000
+                  HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+                    CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
+                  CMD ["node", "server.js"]
+                  DOCKERFILE
+                  else
+                    echo "✓ Dockerfile found"
+                  fi
+            
             build:
               commands:
                 - echo "Building Docker image..."
                 - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
                 - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
                 - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:latest
+            
             post_build:
               commands:
-                - echo "Pushing Docker images..."
+                - echo "Pushing Docker images to ECR..."
                 - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
                 - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:latest
-                - echo "Creating imagedefinitions.json..."
+                - echo "✓ Backend images pushed successfully"
+                - echo "Creating imagedefinitions.json for ECS deployment..."
                 - printf '[{"name":"backend","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > imagedefinitions.json
                 - cat imagedefinitions.json
+          
           artifacts:
             files:
               - imagedefinitions.json
+      
       LogsConfig:
         CloudWatchLogs:
           GroupName:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendBuildLogGroup'
           Status: ENABLED
+      
       Tags:
         - Key: Name
-          Value: !Sub '${ProjectName}-${Environment}-backend-build'
+          Value: !Sub '${ProjectName}-${Environment}-pipeline-backend-build'
         - Key: Environment
           Value: !Ref Environment
-        - Key: Repository
-          Value: 'aqua-vietnam/sample_backend-repo'
 
 Outputs:
   FrontendBuildProjectName:
     Description: Frontend Build Project Name
     Value: !Ref FrontendBuildProject
     Export:
-      Name: !Sub '${ProjectName}-${Environment}-FrontendBuildName'
-
-  FrontendBuildProjectArn:
-    Description: Frontend Build Project ARN
-    Value: !GetAtt FrontendBuildProject.Arn
-    Export:
-      Name: !Sub '${ProjectName}-${Environment}-FrontendBuildArn'
+      Name: !Sub '${ProjectName}-${Environment}-PipelineFrontendBuildName'
 
   BackendBuildProjectName:
     Description: Backend Build Project Name
     Value: !Ref BackendBuildProject
     Export:
-      Name: !Sub '${ProjectName}-${Environment}-BackendBuildName'
+      Name: !Sub '${ProjectName}-${Environment}-PipelineBackendBuildName'
+
+  FrontendBuildProjectArn:
+    Description: Frontend Build Project ARN
+    Value: !GetAtt FrontendBuildProject.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-PipelineFrontendBuildArn'
 
   BackendBuildProjectArn:
     Description: Backend Build Project ARN
     Value: !GetAtt BackendBuildProject.Arn
     Export:
-      Name: !Sub '${ProjectName}-${Environment}-BackendBuildArn'
+      Name: !Sub '${ProjectName}-${Environment}-PipelineBackendBuildArn'

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Stage 4d: ECS Services'
+Description: 'Stage 4.6: Simplified ECS Services with Debug-Friendly Configuration'
 
 Parameters:
   ProjectName:
@@ -9,7 +9,6 @@ Parameters:
   Environment:
     Type: String
     Default: 'production'
-    AllowedValues: ['development', 'staging', 'production']
   
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -22,17 +21,22 @@ Parameters:
   
   FrontendDesiredCount:
     Type: Number
-    Default: 2
-    MinValue: 1
+    Default: 1
+    MinValue: 0
     MaxValue: 10
+    Description: 'Start with 1 for easier debugging'
   
   BackendDesiredCount:
     Type: Number
-    Default: 2
-    MinValue: 1
+    Default: 1
+    MinValue: 0
     MaxValue: 10
+    Description: 'Start with 1 for easier debugging'
 
 Resources:
+  # ============================================
+  # FRONTEND SERVICE - SIMPLIFIED
+  # ============================================
   FrontendService:
     Type: AWS::ECS::Service
     Properties:
@@ -41,9 +45,15 @@ Resources:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
       TaskDefinition:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendTaskDefArn'
+      
+      # Start with minimal count
       DesiredCount: !Ref FrontendDesiredCount
+      
+      # Use FARGATE for simplicity
       LaunchType: FARGATE
       PlatformVersion: LATEST
+      
+      # Network configuration
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
@@ -52,28 +62,42 @@ Resources:
           Subnets:
             - !Ref PrivateSubnet1
             - !Ref PrivateSubnet2
+      
+      # Load balancer configuration
       LoadBalancers:
         - ContainerName: frontend
-          ContainerPort: 3000
+          ContainerPort: 8080
           TargetGroupArn:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendTGArn'
+      
+      # Service discovery (optional - can be removed if causing issues)
       ServiceRegistries:
         - RegistryArn:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendSDArn'
+      
+      # Deployment configuration - VERY LENIENT for debugging
       DeploymentConfiguration:
         MaximumPercent: 200
-        MinimumHealthyPercent: 100
+        MinimumHealthyPercent: 0  # Allow all tasks to be replaced
         DeploymentCircuitBreaker:
           Enable: true
-          Rollback: true
+          Rollback: false  # Don't auto-rollback so we can debug
+      
+      # Enable ECS Exec for debugging
       EnableExecuteCommand: true
-      HealthCheckGracePeriodSeconds: 60
+      
+      # IMPORTANT: Longer grace period for health checks
+      HealthCheckGracePeriodSeconds: 300  # 5 minutes
+      
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-frontend-svc'
         - Key: Environment
           Value: !Ref Environment
 
+  # ============================================
+  # BACKEND SERVICE - SIMPLIFIED
+  # ============================================
   BackendService:
     Type: AWS::ECS::Service
     Properties:
@@ -82,9 +106,15 @@ Resources:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
       TaskDefinition:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendTaskDefArn'
+      
+      # Start with minimal count
       DesiredCount: !Ref BackendDesiredCount
+      
+      # Use FARGATE for simplicity
       LaunchType: FARGATE
       PlatformVersion: LATEST
+      
+      # Network configuration
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
@@ -93,22 +123,33 @@ Resources:
           Subnets:
             - !Ref PrivateSubnet1
             - !Ref PrivateSubnet2
+      
+      # Load balancer configuration
       LoadBalancers:
         - ContainerName: backend
-          ContainerPort: 8080
+          ContainerPort: 3000
           TargetGroupArn:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendTGArn'
+      
+      # Service discovery (optional)
       ServiceRegistries:
         - RegistryArn:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendSDArn'
+      
+      # Deployment configuration - VERY LENIENT
       DeploymentConfiguration:
         MaximumPercent: 200
-        MinimumHealthyPercent: 100
+        MinimumHealthyPercent: 0
         DeploymentCircuitBreaker:
           Enable: true
-          Rollback: true
+          Rollback: false
+      
+      # Enable ECS Exec for debugging
       EnableExecuteCommand: true
-      HealthCheckGracePeriodSeconds: 60
+      
+      # Longer grace period
+      HealthCheckGracePeriodSeconds: 300  # 5 minutes
+      
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-backend-svc'

@@ -63,7 +63,7 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub '${ProjectName}-${Environment}-fe-tg'
-      Port: 3000
+      Port: 8080
       Protocol: HTTP
       VpcId: !Ref VpcId
       TargetType: ip
@@ -93,7 +93,7 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub '${ProjectName}-${Environment}-be-tg'
-      Port: 8080
+      Port: 3000
       Protocol: HTTP
       VpcId: !Ref VpcId
       TargetType: ip

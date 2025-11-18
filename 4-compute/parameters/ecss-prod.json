@@ -1,0 +1,30 @@
+[
+    {
+      "ParameterKey": "ProjectName",
+      "ParameterValue": "aqua-sample-app"
+    },
+    {
+      "ParameterKey": "Environment",
+      "ParameterValue": "production"
+    },
+    {
+      "ParameterKey": "VpcId",
+      "ParameterValue": "vpc-04d308e21a8c004d6"
+    },
+    {
+      "ParameterKey": "PrivateSubnet1",
+      "ParameterValue": "subnet-042f334c91c52c2bf"
+    },
+    {
+      "ParameterKey": "PrivateSubnet2",
+      "ParameterValue": "subnet-012f9f705cc230d61"
+    },
+    {
+      "ParameterKey": "FrontendDesiredCount",
+      "ParameterValue": "2"
+    },
+    {
+      "ParameterKey": "BackendDesiredCount",
+      "ParameterValue": "2"
+    }
+  ]

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Stage 5b: CodePipeline for aqua-vietnam repositories'
+Description: 'Stage 4.4b: CodePipeline for Initial Deployment from GitHub'
 
 Parameters:
   ProjectName:
@@ -9,26 +9,23 @@ Parameters:
   Environment:
     Type: String
     Default: 'production'
-    AllowedValues: ['development', 'staging', 'production']
   
   GitHubConnectionArn:
     Type: String
-    Description: GitHub Connection ARN (from CodeStar Connections)
+    Description: 'GitHub Connection ARN from CodeStar Connections'
   
   GitHubRepoFrontend:
     Type: String
-    Description: Frontend repository (format - owner/repo)
     Default: 'aqua-vietnam/sample_frontend-repo'
   
   GitHubRepoBackend:
     Type: String
-    Description: Backend repository (format - owner/repo)
     Default: 'aqua-vietnam/sample_backend-repo'
   
   GitHubBranch:
     Type: String
     Default: 'main'
-    Description: Branch to deploy (main or master)
+    Description: 'Branch to deploy (main or master)'
 
 Resources:
   # ============================================
@@ -40,15 +37,19 @@ Resources:
       Name: !Sub '${ProjectName}-${Environment}-frontend-pipeline'
       RoleArn:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodePipelineRoleArn'
+      
       ArtifactStore:
         Type: S3
         Location:
           Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ArtifactsBucket'
+      
       Stages:
-        # SOURCE STAGE
+        # ============================================
+        # STAGE 1: SOURCE
+        # ============================================
         - Name: Source
           Actions:
-            - Name: SourceAction
+            - Name: GitHubSource
               ActionTypeId:
                 Category: Source
                 Owner: AWS
@@ -59,15 +60,17 @@ Resources:
                 FullRepositoryId: !Ref GitHubRepoFrontend
                 BranchName: !Ref GitHubBranch
                 OutputArtifactFormat: CODE_ZIP
-                DetectChanges: true
+                DetectChanges: false
               OutputArtifacts:
                 - Name: SourceArtifact
               RunOrder: 1
         
-        # BUILD STAGE
+        # ============================================
+        # STAGE 2: BUILD
+        # ============================================
         - Name: Build
           Actions:
-            - Name: BuildDockerImage
+            - Name: DockerBuild
               ActionTypeId:
                 Category: Build
                 Owner: AWS
@@ -75,40 +78,41 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendBuildName'
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-PipelineFrontendBuildName'
               InputArtifacts:
                 - Name: SourceArtifact
               OutputArtifacts:
                 - Name: BuildArtifact
               RunOrder: 1
         
-        # DEPLOY STAGE
-        - Name: Deploy
-          Actions:
-            - Name: DeployToECS
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: ECS
-                Version: '1'
-              Configuration:
-                ClusterName:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
-                ServiceName:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendServiceName'
-                FileName: imagedefinitions.json
-                DeploymentTimeout: 15
-              InputArtifacts:
-                - Name: BuildArtifact
-              RunOrder: 1
+        # ============================================
+        # STAGE 3: DEPLOY (Will be added after ECS services are created)
+        # ============================================
+        # Commented out for now - will enable after Step 4.6
+        # - Name: Deploy
+        #   Actions:
+        #     - Name: DeployToECS
+        #       ActionTypeId:
+        #         Category: Deploy
+        #         Owner: AWS
+        #         Provider: ECS
+        #         Version: '1'
+        #       Configuration:
+        #         ClusterName:
+        #           Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+        #         ServiceName:
+        #           Fn::ImportValue: !Sub '${ProjectName}-${Environment}-FrontendServiceName'
+        #         FileName: imagedefinitions.json
+        #         DeploymentTimeout: 15
+        #       InputArtifacts:
+        #         - Name: BuildArtifact
+        #       RunOrder: 1
       
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-frontend-pipeline'
         - Key: Environment
           Value: !Ref Environment
-        - Key: Repository
-          Value: !Ref GitHubRepoFrontend
 
   # ============================================
   # BACKEND PIPELINE
@@ -119,15 +123,19 @@ Resources:
       Name: !Sub '${ProjectName}-${Environment}-backend-pipeline'
       RoleArn:
         Fn::ImportValue: !Sub '${ProjectName}-${Environment}-CodePipelineRoleArn'
+      
       ArtifactStore:
         Type: S3
         Location:
           Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ArtifactsBucket'
+      
       Stages:
-        # SOURCE STAGE
+        # ============================================
+        # STAGE 1: SOURCE
+        # ============================================
         - Name: Source
           Actions:
-            - Name: SourceAction
+            - Name: GitHubSource
               ActionTypeId:
                 Category: Source
                 Owner: AWS
@@ -138,15 +146,17 @@ Resources:
                 FullRepositoryId: !Ref GitHubRepoBackend
                 BranchName: !Ref GitHubBranch
                 OutputArtifactFormat: CODE_ZIP
-                DetectChanges: true
+                DetectChanges: false
               OutputArtifacts:
                 - Name: SourceArtifact
               RunOrder: 1
         
-        # BUILD STAGE
+        # ============================================
+        # STAGE 2: BUILD
+        # ============================================
         - Name: Build
           Actions:
-            - Name: BuildDockerImage
+            - Name: DockerBuild
               ActionTypeId:
                 Category: Build
                 Owner: AWS
@@ -154,40 +164,41 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendBuildName'
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-PipelineBackendBuildName'
               InputArtifacts:
                 - Name: SourceArtifact
               OutputArtifacts:
                 - Name: BuildArtifact
               RunOrder: 1
         
-        # DEPLOY STAGE
-        - Name: Deploy
-          Actions:
-            - Name: DeployToECS
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: ECS
-                Version: '1'
-              Configuration:
-                ClusterName:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
-                ServiceName:
-                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendServiceName'
-                FileName: imagedefinitions.json
-                DeploymentTimeout: 15
-              InputArtifacts:
-                - Name: BuildArtifact
-              RunOrder: 1
+        # ============================================
+        # STAGE 3: DEPLOY (Will be added after ECS services are created)
+        # ============================================
+        # Commented out for now - will enable after Step 4.6
+        # - Name: Deploy
+        #   Actions:
+        #     - Name: DeployToECS
+        #       ActionTypeId:
+        #         Category: Deploy
+        #         Owner: AWS
+        #         Provider: ECS
+        #         Version: '1'
+        #       Configuration:
+        #         ClusterName:
+        #           Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ClusterName'
+        #         ServiceName:
+        #           Fn::ImportValue: !Sub '${ProjectName}-${Environment}-BackendServiceName'
+        #         FileName: imagedefinitions.json
+        #         DeploymentTimeout: 15
+        #       InputArtifacts:
+        #         - Name: BuildArtifact
+        #       RunOrder: 1
       
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-backend-pipeline'
         - Key: Environment
           Value: !Ref Environment
-        - Key: Repository
-          Value: !Ref GitHubRepoBackend
 
 Outputs:
   FrontendPipelineName:
@@ -196,20 +207,16 @@ Outputs:
     Export:
       Name: !Sub '${ProjectName}-${Environment}-FrontendPipelineName'
 
-  FrontendPipelineArn:
-    Description: Frontend Pipeline ARN
-    Value: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${FrontendPipeline}'
-    Export:
-      Name: !Sub '${ProjectName}-${Environment}-FrontendPipelineArn'
-
   BackendPipelineName:
     Description: Backend Pipeline Name
     Value: !Ref BackendPipeline
     Export:
       Name: !Sub '${ProjectName}-${Environment}-BackendPipelineName'
 
+  FrontendPipelineArn:
+    Description: Frontend Pipeline ARN
+    Value: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${FrontendPipeline}'
+
   BackendPipelineArn:
     Description: Backend Pipeline ARN
     Value: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${BackendPipeline}'
-    Export:
-      Name: !Sub '${ProjectName}-${Environment}-BackendPipelineArn'
