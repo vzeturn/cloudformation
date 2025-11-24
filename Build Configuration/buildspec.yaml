@@ -1,0 +1,118 @@
+version: 0.2
+
+# AEV Integration Services - .NET 8.0 Build Specification
+# Supports multi-project solutions with Dockerfile
+
+phases:
+  pre_build:
+    commands:
+      - echo "==================================="
+      - echo "AEV .NET 8.0 Build Process"
+      - echo "==================================="
+      - echo "Build started on $(date)"
+      - echo "Repository = $IMAGE_REPO_NAME"
+      - echo "Service = $SERVICE_NAME"
+      
+      # Login to ECR
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      
+      # Set image tags
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - BUILD_NUMBER=${CODEBUILD_BUILD_NUMBER:=0}
+      - IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      
+      - echo "Commit Hash = $COMMIT_HASH"
+      - echo "Image Tag = $IMAGE_TAG"
+      - echo "Build Number = $BUILD_NUMBER"
+      - echo "Image URI = $IMAGE_URI"
+      
+      # Verify Dockerfile exists
+      - |
+        if [ ! -f Dockerfile ]; then
+          echo "ERROR: Dockerfile not found!"
+          echo "Please ensure Dockerfile exists in repository root"
+          exit 1
+        fi
+      - echo "✓ Dockerfile found"
+      
+      # Check .NET project structure
+      - |
+        if [ -f *.sln ]; then
+          echo "✓ Solution file found"
+          ls -la *.sln
+        fi
+      
+      # List project files
+      - echo "Project structure:"
+      - find . -name "*.csproj" -type f
+  
+  build:
+    commands:
+      - echo "Building Docker image for .NET 8.0 application..."
+      - echo "Using Dockerfile with multi-stage build"
+      
+      # Build Docker image
+      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+      
+      # Tag images
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $IMAGE_URI:$IMAGE_TAG
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $IMAGE_URI:latest
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $IMAGE_URI:build-$BUILD_NUMBER
+      
+      - echo "✓ Docker image built successfully"
+      
+      # Show image details
+      - docker images | grep $IMAGE_REPO_NAME
+  
+  post_build:
+    commands:
+      - echo "Pushing Docker images to ECR..."
+      
+      # Push all tags
+      - docker push $IMAGE_URI:$IMAGE_TAG
+      - docker push $IMAGE_URI:latest
+      - docker push $IMAGE_URI:build-$BUILD_NUMBER
+      
+      - echo "✓ All images pushed successfully"
+      - echo ""
+      - echo "Available tags:"
+      - echo "  - $IMAGE_URI:$IMAGE_TAG (commit)"
+      - echo "  - $IMAGE_URI:latest"
+      - echo "  - $IMAGE_URI:build-$BUILD_NUMBER"
+      - echo ""
+      
+      # Create imagedefinitions.json for ECS deployment
+      - echo "Creating imagedefinitions.json..."
+      - printf '[{"name":"%s","imageUri":"%s"}]' $SERVICE_NAME $IMAGE_URI:$IMAGE_TAG > imagedefinitions.json
+      - cat imagedefinitions.json
+      - echo ""
+      - echo "✓ imagedefinitions.json created"
+      - echo ""
+      - echo "==================================="
+      - echo "Build Complete!"
+      - echo "==================================="
+      - echo "Commit: $COMMIT_HASH"
+      - echo "Image: $IMAGE_URI:$IMAGE_TAG"
+      - echo "Ready for ECS deployment"
+
+artifacts:
+  files:
+    - imagedefinitions.json
+  name: BuildArtifact
+
+cache:
+  paths:
+    # Cache NuGet packages
+    - '/root/.nuget/packages/**/*'
+    # Cache Docker layers (if using BuildKit)
+    - '/root/.docker/**/*'
+
+# Environment variables expected:
+# - AWS_DEFAULT_REGION: AWS region
+# - AWS_ACCOUNT_ID: AWS account ID
+# - IMAGE_REPO_NAME: ECR repository name
+# - SERVICE_NAME: Service container name
+# - CODEBUILD_RESOLVED_SOURCE_VERSION: Git commit hash (auto-provided)
+# - CODEBUILD_BUILD_NUMBER: Build number (auto-provided)

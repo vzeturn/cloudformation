@@ -1,0 +1,337 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AEV Phase 1: Foundation - Core Infrastructure for .NET 8.0 Services'
+
+Parameters:
+  ProjectPrefix:
+    Type: String
+    Default: 'aev'
+    Description: Project prefix (aev)
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+  
+  Environment:
+    Type: String
+    Default: 'prod'
+    AllowedValues: ['dev', 'staging', 'prod']
+    Description: Environment name
+  
+  ImageRetentionCount:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 100
+    Description: Number of Docker images to retain in ECR
+  
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 120, 180, 365]
+    Description: CloudWatch Logs retention period
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'prod']
+
+Resources:
+  # ============================================
+  # MASTER KMS KEY (NO TAGS - Fixed)
+  # ============================================
+  MasterKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub '${ProjectPrefix}-${Environment} Master Encryption Key'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          
+          - Sid: Allow CloudWatch Logs
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:CreateGrant'
+              - 'kms:DescribeKey'
+            Resource: '*'
+            Condition:
+              ArnLike:
+                'kms:EncryptionContext:aws:logs:arn': !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*'
+          
+          - Sid: Allow AWS Services
+            Effect: Allow
+            Principal:
+              Service:
+                - ecr.amazonaws.com
+                - s3.amazonaws.com
+                - elasticloadbalancing.amazonaws.com
+                - secretsmanager.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+              - 'kms:CreateGrant'
+              - 'kms:DescribeKey'
+            Resource: '*'
+          
+          - Sid: Allow ELB Service Account for ap-southeast-1
+            Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::114774131450:root'
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 's3.${AWS::Region}.amazonaws.com'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-kms-master'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  MasterKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectPrefix}-${Environment}-master-${AWS::StackName}'
+      TargetKeyId: !Ref MasterKMSKey
+
+  # ============================================
+  # S3 BUCKET - ARTIFACTS (with KMS)
+  # ============================================
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectPrefix}-${Environment}-s3-artifacts-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !Ref MasterKMSKey
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: CleanupOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: !If [IsProduction, 90, 30]
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-s3-artifacts'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub '${ArtifactsBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  # ============================================
+  # S3 BUCKET - LOGS (SSE-S3 for ALB compatibility)
+  # ============================================
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectPrefix}-${Environment}-s3-logs-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            Status: Enabled
+            ExpirationInDays: !If [IsProduction, 90, 30]
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-s3-logs'
+        - Key: Environment
+          Value: !Ref Environment
+
+  LogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt LogsBucket.Arn
+              - !Sub '${LogsBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+          
+          - Sid: AllowELBServiceAccount
+            Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::114774131450:root'
+            Action: 
+              - 's3:PutObject'
+              - 's3:GetBucketAcl'
+            Resource:
+              - !GetAtt LogsBucket.Arn
+              - !Sub '${LogsBucket.Arn}/*'
+
+  # ============================================
+  # CLOUDWATCH LOG GROUPS
+  # ============================================
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: MasterKMSKey
+    Properties:
+      LogGroupName: !Sub '/ecs/${ProjectPrefix}-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+      KmsKeyId: !GetAtt MasterKMSKey.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-logs-ecs'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ECSExecLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: MasterKMSKey
+    Properties:
+      LogGroupName: !Sub '/ecs/${ProjectPrefix}-${Environment}/exec'
+      RetentionInDays: !Ref LogRetentionDays
+      KmsKeyId: !GetAtt MasterKMSKey.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-logs-ecs-exec'
+
+  CodeBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/codebuild/${ProjectPrefix}-${Environment}'
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-logs-codebuild'
+        - Key: Environment
+          Value: !Ref Environment
+
+  CodePipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/codepipeline/${ProjectPrefix}-${Environment}'
+      RetentionInDays: 14
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectPrefix}-${Environment}'
+      RetentionInDays: 7
+
+Outputs:
+  # KMS
+  MasterKMSKeyId:
+    Description: Master KMS Key ID
+    Value: !Ref MasterKMSKey
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-KMSKeyId'
+
+  MasterKMSKeyArn:
+    Description: Master KMS Key ARN
+    Value: !GetAtt MasterKMSKey.Arn
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-KMSKeyArn'
+
+  # S3 Buckets
+  ArtifactsBucketName:
+    Description: Artifacts S3 Bucket Name
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-ArtifactsBucket'
+
+  ArtifactsBucketArn:
+    Description: Artifacts S3 Bucket ARN
+    Value: !GetAtt ArtifactsBucket.Arn
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-ArtifactsBucketArn'
+
+  LogsBucketName:
+    Description: Logs S3 Bucket Name
+    Value: !Ref LogsBucket
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-LogsBucket'
+
+  LogsBucketArn:
+    Description: Logs S3 Bucket ARN
+    Value: !GetAtt LogsBucket.Arn
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-LogsBucketArn'
+
+  # CloudWatch Log Groups
+  ECSLogGroupName:
+    Description: ECS CloudWatch Log Group
+    Value: !Ref ECSLogGroup
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-ECSLogGroup'
+
+  ECSExecLogGroupName:
+    Description: ECS Exec Log Group
+    Value: !Ref ECSExecLogGroup
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-ECSExecLogGroup'
+
+  CodeBuildLogGroupName:
+    Description: CodeBuild Log Group
+    Value: !Ref CodeBuildLogGroup
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-CodeBuildLogGroup'
+
+  CodePipelineLogGroupName:
+    Description: CodePipeline Log Group
+    Value: !Ref CodePipelineLogGroup
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-CodePipelineLogGroup'

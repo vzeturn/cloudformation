@@ -1,0 +1,74 @@
+[
+  {
+    "ParameterKey": "ProjectPrefix",
+    "ParameterValue": "aev"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "ServicePurpose",
+    "ParameterValue": "integration"
+  },
+  {
+    "ParameterKey": "AppName",
+    "ParameterValue": "services"
+  },
+  {
+    "ParameterKey": "ServicePort",
+    "ParameterValue": "8080"
+  },
+  {
+    "ParameterKey": "HealthCheckPath",
+    "ParameterValue": "/health"
+  },
+  {
+    "ParameterKey": "ContainerImage",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "CPU",
+    "ParameterValue": "256"
+  },
+  {
+    "ParameterKey": "Memory",
+    "ParameterValue": "512"
+  },
+  {
+    "ParameterKey": "DotNetEnvironment",
+    "ParameterValue": "Development"
+  },
+  {
+    "ParameterKey": "DesiredCount",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "MinCapacity",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "MaxCapacity",
+    "ParameterValue": "2"
+  },
+  {
+    "ParameterKey": "TargetCPUUtilization",
+    "ParameterValue": "75"
+  },
+  {
+    "ParameterKey": "PathPattern",
+    "ParameterValue": "/api/*"
+  },
+  {
+    "ParameterKey": "Priority",
+    "ParameterValue": "10"
+  },
+  {
+    "ParameterKey": "HostHeader",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "EnableSwagger",
+    "ParameterValue": "true"
+  }
+]

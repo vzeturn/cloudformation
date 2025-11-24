@@ -1,0 +1,38 @@
+[
+  {
+    "ParameterKey": "ProjectPrefix",
+    "ParameterValue": "aev"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "ServicePurpose",
+    "ParameterValue": "integration"
+  },
+  {
+    "ParameterKey": "AppName",
+    "ParameterValue": "services-api"
+  },
+  {
+    "ParameterKey": "GitHubConnectionArn",
+    "ParameterValue": "arn:aws:codeconnections:ap-southeast-1:474082330515:connection/59427c0a-fa99-4977-8152-8b8a1aa99513"
+  },
+  {
+    "ParameterKey": "GitHubRepository",
+    "ParameterValue": "aqua-vietnam/aev-integration-services"
+  },
+  {
+    "ParameterKey": "GitHubBranch",
+    "ParameterValue": "develop"
+  },
+  {
+    "ParameterKey": "BuildSpecPath",
+    "ParameterValue": "buildspec.yml"
+  },
+  {
+    "ParameterKey": "AutoDeploy",
+    "ParameterValue": "true"
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "ProjectPrefix",
+    "ParameterValue": "aev"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "ImageRetentionCount",
+    "ParameterValue": "5"
+  },
+  {
+    "ParameterKey": "LogRetentionDays",
+    "ParameterValue": "7"
+  }
+]

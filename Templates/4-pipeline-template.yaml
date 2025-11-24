@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AEV Phase 3: CI/CD Pipeline Template for .NET 8.0 Services'
+
+Parameters:
+  ProjectPrefix:
+    Type: String
+    Default: 'aev'
+  
+  Environment:
+    Type: String
+    Default: 'prod'
+    AllowedValues: ['dev', 'staging', 'prod']
+  
+  ServicePurpose:
+    Type: String
+    Description: 'Service purpose (e.g., integration, api)'
+  
+  AppName:
+    Type: String
+    Description: 'Application name (e.g., services-api)'
+  
+  GitHubConnectionArn:
+    Type: String
+    Description: 'CodeStar Connections ARN for GitHub'
+  
+  GitHubRepository:
+    Type: String
+    Description: 'GitHub repository (format: owner/repo)'
+    Default: 'aqua-vietnam/aev-integration-services'
+  
+  GitHubBranch:
+    Type: String
+    Default: 'main'
+    Description: 'Branch to build from'
+  
+  BuildSpecPath:
+    Type: String
+    Default: 'buildspec.yml'
+    Description: 'Path to buildspec file'
+  
+  AutoDeploy:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Auto-deploy on code changes'
+
+Conditions:
+  HasAutoDeploy: !Equals [!Ref AutoDeploy, 'true']
+
+Resources:
+  # ============================================
+  # CODEBUILD PROJECT
+  # Naming: aev-{env}-build-{purpose}-{app}
+  # ============================================
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectPrefix}-${Environment}-build-${ServicePurpose}-${AppName}'
+      Description: !Sub 'Build .NET 8.0 service: ${ServicePurpose}-${AppName}'
+      ServiceRole:
+        Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-CodeBuildRoleArn'
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Sub '${ProjectPrefix}-${Environment}-ecr-${ServicePurpose}-${AppName}'
+          - Name: SERVICE_NAME
+            Value: !Sub '${ServicePurpose}-${AppName}'
+          - Name: DOTNET_VERSION
+            Value: '8.0'
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Ref BuildSpecPath
+      Cache:
+        Type: S3
+        Location: !Sub 
+          - '${Bucket}/build-cache/${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}'
+          - Bucket:
+              Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-ArtifactsBucket'
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName:
+            Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-CodeBuildLogGroup'
+          Status: ENABLED
+          StreamName: !Sub '${ServicePurpose}-${AppName}'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-build-${ServicePurpose}-${AppName}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Sub '${ServicePurpose}-${AppName}'
+
+  # ============================================
+  # CODEPIPELINE
+  # Naming: aev-{env}-pipeline-{purpose}-{app}
+  # ============================================
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${ProjectPrefix}-${Environment}-pipeline-${ServicePurpose}-${AppName}'
+      RoleArn:
+        Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-CodePipelineRoleArn'
+      ArtifactStore:
+        Type: S3
+        Location:
+          Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-ArtifactsBucket'
+      Stages:
+        # SOURCE STAGE
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Ref GitHubRepository
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+                DetectChanges: !If [HasAutoDeploy, 'true', 'false']
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+        
+        # BUILD STAGE
+        - Name: Build
+          Actions:
+            - Name: DockerBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref BuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+        
+        # DEPLOY STAGE
+        - Name: Deploy
+          Actions:
+            - Name: DeployToECS
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: ECS
+                Version: '1'
+              Configuration:
+                ClusterName:
+                  Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-ClusterName'
+                ServiceName: !Sub '${ProjectPrefix}-${Environment}-ecs-${ServicePurpose}-${AppName}'
+                FileName: imagedefinitions.json
+                DeploymentTimeout: 15
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+      
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-pipeline-${ServicePurpose}-${AppName}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Sub '${ServicePurpose}-${AppName}'
+        - Key: Repository
+          Value: !Ref GitHubRepository
+
+Outputs:
+  PipelineName:
+    Description: Pipeline Name
+    Value: !Ref Pipeline
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-PipelineName'
+
+  PipelineArn:
+    Description: Pipeline ARN
+    Value: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}'
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-PipelineArn'
+
+  BuildProjectName:
+    Description: CodeBuild Project Name
+    Value: !Ref BuildProject
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-BuildProjectName'

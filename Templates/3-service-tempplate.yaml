@@ -1,0 +1,470 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AEV Phase 3: Reusable Service Template for .NET 8.0 Applications'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Project Configuration'
+        Parameters:
+          - ProjectPrefix
+          - Environment
+      - Label:
+          default: 'Service Identity'
+        Parameters:
+          - ServicePurpose
+          - AppName
+          - ServicePort
+          - HealthCheckPath
+      - Label:
+          default: 'Container Configuration (.NET 8.0)'
+        Parameters:
+          - ContainerImage
+          - CPU
+          - Memory
+          - DotNetEnvironment
+      - Label:
+          default: 'Deployment Configuration'
+        Parameters:
+          - DesiredCount
+          - MinCapacity
+          - MaxCapacity
+      - Label:
+          default: 'Routing Configuration'
+        Parameters:
+          - PathPattern
+          - Priority
+          - HostHeader
+
+Parameters:
+  ProjectPrefix:
+    Type: String
+    Default: 'aev'
+  
+  Environment:
+    Type: String
+    Default: 'prod'
+    AllowedValues: ['dev', 'staging', 'prod']
+  
+  # Service Naming: aev-{env}-{purpose}-{app}
+  ServicePurpose:
+    Type: String
+    Description: 'Service purpose/category (e.g., integration, api, worker)'
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    Default: 'integration'
+  
+  AppName:
+    Type: String
+    Description: 'Application name (e.g., services-api, payment-api)'
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+  
+  ServicePort:
+    Type: Number
+    Default: 8080
+    Description: '.NET 8.0 default HTTP port'
+    MinValue: 1
+    MaxValue: 65535
+  
+  HealthCheckPath:
+    Type: String
+    Default: '/health'
+    Description: 'Health check endpoint (.NET Health Checks)'
+  
+  # Container Configuration
+  ContainerImage:
+    Type: String
+    Default: ''
+    Description: 'ECR image URI (leave empty to use auto-generated)'
+  
+  CPU:
+    Type: String
+    Default: '512'
+    AllowedValues: ['256', '512', '1024', '2048', '4096']
+    Description: 'CPU units for Fargate'
+  
+  Memory:
+    Type: String
+    Default: '1024'
+    AllowedValues: ['512', '1024', '2048', '4096', '8192', '16384']
+    Description: 'Memory in MB for Fargate'
+  
+  DotNetEnvironment:
+    Type: String
+    Default: 'Production'
+    AllowedValues: ['Development', 'Staging', 'Production']
+    Description: 'ASPNETCORE_ENVIRONMENT value'
+  
+  # Deployment
+  DesiredCount:
+    Type: Number
+    Default: 2
+    MinValue: 0
+    MaxValue: 100
+  
+  MinCapacity:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 100
+  
+  MaxCapacity:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 100
+  
+  TargetCPUUtilization:
+    Type: Number
+    Default: 70
+    MinValue: 10
+    MaxValue: 90
+  
+  # Routing
+  PathPattern:
+    Type: String
+    Default: '/*'
+    Description: 'ALB path pattern'
+  
+  Priority:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 50000
+  
+  HostHeader:
+    Type: String
+    Default: ''
+    Description: 'Optional host header for routing'
+  
+  # .NET Specific
+  EnableSwagger:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Swagger UI in production'
+
+Conditions:
+  HasCustomImage: !Not [!Equals [!Ref ContainerImage, '']]
+  HasHostHeader: !Not [!Equals [!Ref HostHeader, '']]
+  IsDevelopment: !Equals [!Ref DotNetEnvironment, 'Development']
+
+Resources:
+  # ============================================
+  # ECR REPOSITORY
+  # Naming: aev-{env}-ecr-{purpose}-{app}
+  # ============================================
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectPrefix}-${Environment}-ecr-${ServicePurpose}-${AppName}'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey:
+          Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-KMSKeyArn'
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-ecr-${ServicePurpose}-${AppName}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Sub '${ServicePurpose}-${AppName}'
+
+  # ============================================
+  # SERVICE DISCOVERY
+  # DNS: {purpose}-{app}.aev-{env}.local
+  # ============================================
+  ServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: !Sub '${ServicePurpose}-${AppName}'
+      NamespaceId:
+        Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-NamespaceId'
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 60
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-sd-${ServicePurpose}-${AppName}'
+
+  # ============================================
+  # TARGET GROUP
+  # Naming: aev-{env}-tg-{purpose}-{app}
+  # ============================================
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${ProjectPrefix}-${Environment}-tg-${ServicePurpose}-${AppName}'
+      Port: !Ref ServicePort
+      Protocol: HTTP
+      VpcId: !Ref 'AWS::NoValue'
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200-299'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+        - Key: stickiness.enabled
+          Value: 'true'
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: '86400'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-tg-${ServicePurpose}-${AppName}'
+        - Key: Service
+          Value: !Sub '${ServicePurpose}-${AppName}'
+
+  # ============================================
+  # ALB LISTENER RULE
+  # ============================================
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn:
+        Fn::If:
+          - HasHostHeader
+          - Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-HTTPSListenerArn'
+          - Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-HTTPListenerArn'
+      Priority: !Ref Priority
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - !Ref PathPattern
+        - !If
+          - HasHostHeader
+          - Field: host-header
+            Values:
+              - !Ref HostHeader
+          - !Ref 'AWS::NoValue'
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ============================================
+  # TASK DEFINITION (.NET 8.0)
+  # Naming: aev-{env}-task-{purpose}-{app}
+  # ============================================
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectPrefix}-${Environment}-task-${ServicePurpose}-${AppName}'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref CPU
+      Memory: !Ref Memory
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-TaskExecutionRoleArn'
+      TaskRoleArn:
+        Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-TaskRoleArn'
+      ContainerDefinitions:
+        - Name: !Sub '${ServicePurpose}-${AppName}'
+          Image: !If
+            - HasCustomImage
+            - !Ref ContainerImage
+            - !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectPrefix}-${Environment}-ecr-${ServicePurpose}-${AppName}:latest'
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ServicePort
+              Protocol: tcp
+              Name: http
+            - ContainerPort: 8081
+              Protocol: tcp
+              Name: https
+          Environment:
+            # .NET 8.0 Standard Environment Variables
+            - Name: ASPNETCORE_ENVIRONMENT
+              Value: !Ref DotNetEnvironment
+            - Name: ASPNETCORE_URLS
+              Value: !Sub 'http://+:${ServicePort}'
+            - Name: SERVICE_NAME
+              Value: !Sub '${ServicePurpose}-${AppName}'
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            # Logging
+            - Name: Logging__LogLevel__Default
+              Value: !If [IsDevelopment, 'Debug', 'Information']
+            - Name: Logging__LogLevel__Microsoft.AspNetCore
+              Value: !If [IsDevelopment, 'Information', 'Warning']
+            # Swagger
+            - Name: Swagger__Enabled
+              Value: !Ref EnableSwagger
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group:
+                Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-ECSLogGroup'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Sub '${ServicePurpose}-${AppName}'
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - !Sub 'curl -f http://localhost:${ServicePort}${HealthCheckPath} || exit 1'
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-task-${ServicePurpose}-${AppName}'
+        - Key: Service
+          Value: !Sub '${ServicePurpose}-${AppName}'
+
+  # ============================================
+  # ECS SERVICE
+  # Naming: aev-{env}-ecs-{purpose}-{app}
+  # ============================================
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: ListenerRule
+    Properties:
+      ServiceName: !Sub '${ProjectPrefix}-${Environment}-ecs-${ServicePurpose}-${AppName}'
+      Cluster:
+        Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-ClusterName'
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-ServiceSecurityGroupId'
+          Subnets: !Split
+            - ','
+            - Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-PrivateSubnets'
+      LoadBalancers:
+        - ContainerName: !Sub '${ServicePurpose}-${AppName}'
+          ContainerPort: !Ref ServicePort
+          TargetGroupArn: !Ref TargetGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ServiceDiscovery.Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      EnableExecuteCommand: true
+      HealthCheckGracePeriodSeconds: 60
+      PropagateTags: SERVICE
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectPrefix}-${Environment}-ecs-${ServicePurpose}-${AppName}'
+        - Key: Service
+          Value: !Sub '${ServicePurpose}-${AppName}'
+
+  # ============================================
+  # AUTO SCALING
+  # ============================================
+  ScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ResourceId: !Sub
+        - 'service/${ClusterName}/${ServiceName}'
+        - ClusterName:
+            Fn::ImportValue: !Sub '${ProjectPrefix}-${Environment}-ClusterName'
+          ServiceName: !GetAtt ECSService.Name
+      ScalableDimension: ecs:service:DesiredCount
+      MinCapacity: !Ref MinCapacity
+      MaxCapacity: !Ref MaxCapacity
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
+
+  CPUScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${ProjectPrefix}-${Environment}-scaling-cpu-${ServicePurpose}-${AppName}'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: !Ref TargetCPUUtilization
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  MemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${ProjectPrefix}-${Environment}-scaling-mem-${ServicePurpose}-${AppName}'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 80
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+Outputs:
+  ServiceName:
+    Description: Full Service Name
+    Value: !Sub '${ProjectPrefix}-${Environment}-ecs-${ServicePurpose}-${AppName}'
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-ServiceName'
+
+  ServiceArn:
+    Description: ECS Service ARN
+    Value: !Ref ECSService
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-ServiceArn'
+
+  ServiceURL:
+    Description: Service DNS Name (via Service Discovery)
+    Value: !Sub '${ServicePurpose}-${AppName}.${ProjectPrefix}-${Environment}.local'
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-ServiceURL'
+
+  TargetGroupArn:
+    Description: Target Group ARN
+    Value: !Ref TargetGroup
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-TGArn'
+
+  ECRRepositoryUri:
+    Description: ECR Repository URI
+    Value: !GetAtt ECRRepository.RepositoryUri
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-ECRUri'
+
+  TaskDefinitionArn:
+    Description: Task Definition ARN
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub '${ProjectPrefix}-${Environment}-${ServicePurpose}-${AppName}-TaskDefArn'
